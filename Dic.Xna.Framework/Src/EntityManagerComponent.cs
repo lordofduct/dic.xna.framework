@@ -193,15 +193,22 @@ namespace Dic.Xna.Framework
             {
                 //dispose the entity before removing it from anything, otherwise the components won't be able to properly be destroyed (this dispose calls dispose on all components which subsequently calls DestroyComponent)
                 entity.Dispose();
-                lock (_lock)
+                if (_phase == UpdatePhase.UpdatingPhase)
                 {
-                    if (_entities.Contains(entity))
+                    lock (_lock)
+                    {
+                        _deadEntityList.Remove(entity);
+                        _initializeCache.Remove(entity);
+                    }
+                }
+                else
+                {
+                    lock (_lock)
                     {
                         _entities.Remove(entity);
+                        _initializeCache.Remove(entity);
                     }
-                    _initializeCache.Remove(entity);
                 }
-
             }
         }
 
