@@ -197,7 +197,10 @@ namespace Dic.Xna.Framework
                 {
                     lock (_lock)
                     {
-                        _deadEntityList.Remove(entity);
+                        if (_entities.Contains(entity))
+                        {
+                            _deadEntityList.Add(entity);
+                        }
                         _initializeCache.Remove(entity);
                     }
                 }
