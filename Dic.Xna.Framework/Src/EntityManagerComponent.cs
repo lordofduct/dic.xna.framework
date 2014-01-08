@@ -13,6 +13,11 @@ namespace Dic.Xna.Framework
     /// the entities and their components won't be updated. This can allow for building large scenes that may take several update cycles (i.e. multi-threaded) 
     /// without the Awake, Start, and Update messages being dispatched to Entities.
     /// </summary>
+    /// <remarks>
+    /// This little bastard is slightly annoying because there are multiple collections that need to be synced properly depending on the thread that accesses it. 
+    /// The big problem arises from the fact that a lot of the methods that modify the collections are called by the dependent code that is called during the Update 
+    /// method. This causes the Update method to lock itself up if not handled properly. Hence the weird locking spaghetti nonsense in here.
+    /// </remarks>
     public class EntityManagerComponent : GameComponent
     {
 
