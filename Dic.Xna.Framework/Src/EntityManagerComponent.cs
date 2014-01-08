@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Linq;
 
 using Microsoft.Xna.Framework;
@@ -17,13 +18,29 @@ namespace Dic.Xna.Framework
 
         #region Fields
 
-        private System.Threading.Thread _updateThread = null;
-        private bool _bInStartCallLoop = false;
+        /// <summary>
+        /// Rules:
+        /// lock in phases None, InitializingPhase, StartingPhase
+        /// never modify Entities list in UpdatingPhase
+        /// </summary>
+        private enum UpdatePhase
+        {
+            None = 0,
+            InitializingPhase = 1,
+            StartingPhase = 2,
+            UpdatingPhase = 3,
+            CleanUp = 4
+        }
 
+        private System.Threading.Thread _updateThread = null;
+        private UpdatePhase _phase = UpdatePhase.None;
+
+        private object _lock = new object();
         private List<Entity> _entities = new List<Entity>();
         private List<Entity> _initializeCache = new List<Entity>();
         private List<IEntityComponent> _componentInitializeCache = new List<IEntityComponent>();
-        private List<IEntityComponent> _startPool = new List<IEntityComponent>();
+        private ConcurrentQueue<IEntityComponent> _startPool = new ConcurrentQueue<IEntityComponent>();
+        private List<Entity> _deadEntityList = new List<Entity>();
 
         #endregion
 
@@ -51,24 +68,43 @@ namespace Dic.Xna.Framework
         {
             if (entity.EntityManager != this) throw new ArgumentException("Can only register entity with the EntityManagerComponent it was constructed with.", "entity");
 
-            if (!_entities.Contains(entity))
+            if (_updateThread != null && System.Threading.Thread.CurrentThread == _updateThread)
             {
-                if (_bInStartCallLoop && _updateThread != null && System.Threading.Thread.CurrentThread == _updateThread)
+                //occurred during the main update thread while this Update method is running
+                switch (_phase)
                 {
-                    //this means an entity was created by another component during its Start call, initialize that entity immediately and add its components to the StartPool to be called there
-                    _entities.Add(entity);
-                    var comps = entity.Components.ToArray(); //any components that get added during Initialize will end up in the auto-initialized in RegisterComponent
-                    foreach (var comp in comps)
-                    {
-                        comp.Initialize();
-                        _startPool.Add(comp);
-                    }
+                    case UpdatePhase.StartingPhase:
+                        if (!_entities.Contains(entity))
+                        {
+                            _entities.Add(entity); //safe to add here, entities isn't modified during startcallloop
+                            var comps = entity.Components.ToArray(); //any components that get added during Initialize will end up in the auto-initialized in RegisterComponent
+                            foreach (var comp in comps)
+                            {
+                                comp.Initialize();
+                                _startPool.Enqueue(comp);
+                            }
+                        }
+                        break;
+                    case UpdatePhase.None:
+                    case UpdatePhase.InitializingPhase:
+                    case UpdatePhase.UpdatingPhase:
+                    case UpdatePhase.CleanUp:
+                        lock (_lock)
+                        {
+                            if (!_entities.Contains(entity))
+                            {
+                                _initializeCache.Add(entity);
+                            }
+                        }
+                        break;
                 }
-                else
+            }
+            else
+            {
+                //happened outside of the main update loop, just lock and add
+                lock (_lock)
                 {
-                    //defer the adding of the entity to the main list to the main update thread, this helps with thread-syncing
-                    //we lock on the cache list for thread-safety
-                    lock (_initializeCache)
+                    if (!_entities.Contains(entity))
                     {
                         _initializeCache.Add(entity);
                     }
@@ -82,18 +118,35 @@ namespace Dic.Xna.Framework
             if (component.Entity == null) throw new EntityComponentException("Malformed IEntityComponent, not attached to an Entity.");
             if (component.EntityManager == null) throw new ArgumentException("Can only register component with the EntityManagerComponent it's entity is managed by.", "component");
 
-            if (_entities.Contains(component.Entity))
+            if (_updateThread != null && System.Threading.Thread.CurrentThread == _updateThread)
             {
-                if (_bInStartCallLoop && _updateThread != null && System.Threading.Thread.CurrentThread == _updateThread)
+                //occurred during the main update thread while this Update method is running
+                switch (_phase)
                 {
-                    //this means a component was added by another component during its Start call, initialize that component immediately and add it to the StartPool to be called there
-                    component.Initialize();
-                    _startPool.Add(component);
+                    case UpdatePhase.StartingPhase:
+                        if (_entities.Contains(component.Entity))
+                        {
+                            component.Initialize();
+                            _startPool.Enqueue(component);
+                        }
+                        break;
+                    case UpdatePhase.None:
+                    case UpdatePhase.InitializingPhase:
+                    case UpdatePhase.UpdatingPhase:
+                    case UpdatePhase.CleanUp:
+                        lock (_lock)
+                        {
+                            _componentInitializeCache.Add(component);
+                        }
+                        break;
                 }
-                else
+            }
+            else
+            {
+                //happened outside of the main update loop, just lock and add if entity has already been initialized
+                lock (_lock)
                 {
-                    //if the entity has already been initialized
-                    lock (_componentInitializeCache)
+                    if (_entities.Contains(component.Entity))
                     {
                         _componentInitializeCache.Add(component);
                     }
@@ -105,10 +158,50 @@ namespace Dic.Xna.Framework
         {
             if (entity.EntityManager != this) throw new ArgumentException("Can only register entity with the EntityManagerComponent it was constructed with.", "entity");
 
-            if (_entities.Contains(entity))
+            if (_updateThread != null && System.Threading.Thread.CurrentThread == _updateThread)
             {
-                _entities.Remove(entity);
+                //occurred during the main update thread while this Update method is running
+                switch (_phase)
+                {
+                    case UpdatePhase.None:
+                    case UpdatePhase.InitializingPhase:
+                    case UpdatePhase.StartingPhase:
+                    case UpdatePhase.CleanUp:
+                        //dispose the entity before removing it from anything, otherwise the components won't be able to properly be destroyed (this dispose calls dispose on all components which subsequently calls DestroyComponent)
+                        entity.Dispose();
+                        lock (_lock)
+                        {
+                            _entities.Remove(entity);
+                            _initializeCache.Remove(entity);
+                        }
+                        break;
+                    case UpdatePhase.UpdatingPhase:
+                        //we can't modify the entity list during this phase, so delay until afterward
+                        entity.Dispose();
+                        lock (_lock)
+                        {
+                            if (_entities.Contains(entity))
+                            {
+                                _deadEntityList.Add(entity);
+                            }
+                            _initializeCache.Remove(entity);
+                        }
+                        break;
+                }
+            }
+            else
+            {
+                //dispose the entity before removing it from anything, otherwise the components won't be able to properly be destroyed (this dispose calls dispose on all components which subsequently calls DestroyComponent)
                 entity.Dispose();
+                lock (_lock)
+                {
+                    if (_entities.Contains(entity))
+                    {
+                        _entities.Remove(entity);
+                    }
+                    _initializeCache.Remove(entity);
+                }
+
             }
         }
 
@@ -119,6 +212,33 @@ namespace Dic.Xna.Framework
             if (component.EntityManager == null) throw new ArgumentException("Can only register component with the EntityManagerComponent it's entity is managed by.", "component");
 
             component.Components.RemoveComponent(component);
+
+            if (_updateThread != null && System.Threading.Thread.CurrentThread == _updateThread)
+            {
+                //occurred during the main update thread while this Update method is running
+                switch (_phase)
+                {
+                    case UpdatePhase.None:
+                    case UpdatePhase.InitializingPhase:
+                    case UpdatePhase.StartingPhase:
+                    case UpdatePhase.UpdatingPhase:
+                    case UpdatePhase.CleanUp:
+                        lock (_lock)
+                        {
+                            _componentInitializeCache.Remove(component);
+                        }
+                        break;
+                }
+            }
+            else
+            {
+                lock (_lock)
+                {
+                    _componentInitializeCache.Remove(component);
+                }
+            }
+
+            component.Dispose();
         }
 
         public Entity CreateEntity()
@@ -160,19 +280,20 @@ namespace Dic.Xna.Framework
 
             base.Update(gameTime);
 
+            _phase = UpdatePhase.InitializingPhase;
             _updateThread = System.Threading.Thread.CurrentThread; //store a reference to the currently running thread
 
             if (_initializeCache.Count > 0)
             {
                 Entity[] cache;
                 //lock onto the cache and get all the entities out, this way when Awake and Start are called those messages can create Entities without issue
-                lock (_initializeCache)
+                lock (_lock)
                 {
                     cache = _initializeCache.ToArray();
                     _initializeCache.Clear();
+                    //Add to the entity list here, entities are only added to the actual list in the main update thread for thread-safety
+                    _entities.AddRange(cache);
                 }
-                //Add to the entity list here, entities are only added to the actual list in the main update thread for thread-safety
-                _entities.AddRange(cache);
 
                 //initialize the entity
                 foreach (var entity in cache)
@@ -182,7 +303,7 @@ namespace Dic.Xna.Framework
                     foreach (var comp in comps)
                     {
                         comp.Initialize();
-                        _startPool.Add(comp);
+                        _startPool.Enqueue(comp);
                     }
                 }
 
@@ -192,7 +313,7 @@ namespace Dic.Xna.Framework
             while (_componentInitializeCache.Count > 0)
             {
                 IEntityComponent[] cache;
-                lock (_componentInitializeCache)
+                lock (_lock)
                 {
                     cache = _componentInitializeCache.ToArray();
                     _componentInitializeCache.Clear();
@@ -201,29 +322,46 @@ namespace Dic.Xna.Framework
                 foreach (var comp in cache)
                 {
                     comp.Initialize();
-                    _startPool.Add(comp);
+                    _startPool.Enqueue(comp);
                 }
             }
 
             //now call start on all that need it, we keep doing this until we register empty incase any components are registered during the call to Start
-            _bInStartCallLoop = true;
+            _phase = UpdatePhase.StartingPhase;
             while (_startPool.Count > 0)
             {
-                var pool = _startPool.ToArray();
-                _startPool.Clear();
-                foreach (var comp in pool)
+                IEntityComponent comp;
+                if (_startPool.TryDequeue(out comp))
                 {
                     comp.Start();
                 }
             }
-            _bInStartCallLoop = false;
 
+            //perform update on all live entities
+            _phase = UpdatePhase.UpdatingPhase;
             foreach (var entity in _entities)
             {
-                entity.Update(gameTime);
+                if (!entity.Disposed) entity.Update(gameTime);
+            }
+
+            //clean dead entity list
+            _phase = UpdatePhase.CleanUp;
+            while (_deadEntityList.Count > 0)
+            {
+                Entity[] cache;
+                lock(_lock)
+                {
+                    cache = _deadEntityList.ToArray();
+                    _deadEntityList.Clear();
+                }
+                foreach (var entity in cache)
+                {
+                    _entities.Remove(entity);
+                }
             }
 
             _updateThread = null;
+            _phase = UpdatePhase.None;
         }
 
         #endregion

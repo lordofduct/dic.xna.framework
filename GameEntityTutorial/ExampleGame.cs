@@ -37,13 +37,6 @@ namespace GameEntityTutorial
         {
             // TODO: Add your initialization logic here
 
-            const int CNT = 1000000;
-
-            //for (int i = 0; i < CNT; i++)
-            //{
-            //    var ent = this.EntityManager.CreateEntity();
-            //}
-
             base.Initialize();
         }
 
@@ -77,58 +70,10 @@ namespace GameEntityTutorial
 
             // TODO: Add your update logic here
 
-            if (_iIteration == 3)
-            {
-
-                const int CNT = 1000000;
-                long t;
-
-                var ent1 = this.EntityManager.CreateEntity();
-                var ent2 = this.EntityManager.CreateEntity();
-                var ent3 = this.EntityManager.CreateEntity();
-
-                ent1.Transform.Children.Add(ent2.Transform);
-                ent2.Transform.Children.Add(ent3.Transform);
-
-                ent1.Transform.LocalPosition = new Vector3(3f, 5f, 1.2f);
-                ent2.Transform.LocalPosition = new Vector3(1.2f, 11f, 1.7f);
-
-                var rand = new Random();
-
-                t = DateTime.Now.Ticks;
-
-                for (int i = 0; i < CNT; i++)
-                {
-                    var v = new Vector3((float)rand.NextDouble(), (float)rand.NextDouble(), (float)rand.NextDouble());
-                    ent3.Transform.LocalPosition = v;
-                }
-
-                t = DateTime.Now.Ticks - t;
-
-                Console.WriteLine("LocalPosition: " + ((double)t / (double)TimeSpan.TicksPerSecond).ToString() + " seconds");
-
-                t = DateTime.Now.Ticks;
-
-                for (int i = 0; i < CNT; i++)
-                {
-                    var v = new Vector3((float)rand.NextDouble(), (float)rand.NextDouble(), (float)rand.NextDouble());
-                    ent3.Transform.Position = v;
-                }
-
-                t = DateTime.Now.Ticks - t;
-
-                Console.WriteLine("WorldPosition: " + ((double)t / (double)TimeSpan.TicksPerSecond).ToString() + " seconds");
-
-            }
-
-            _iIteration++;
-
             base.Update(gameTime);
 
 
         }
-
-        private int _iIteration = 0;
 
     }
 }

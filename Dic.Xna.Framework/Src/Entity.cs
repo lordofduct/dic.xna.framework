@@ -152,6 +152,11 @@ namespace Dic.Xna.Framework
             GC.SuppressFinalize(this);
         }
 
+        public bool Disposed
+        {
+            get { return _bDisposed; }
+        }
+
         #endregion
 
         #region Special Types

@@ -406,5 +406,19 @@ namespace Dic.Xna.Framework
 
         #endregion
 
+        #region IDisposable Interface
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _children.Clear();
+            }
+
+            base.Dispose(disposing);
+        }
+
+        #endregion
+
     }
 }
