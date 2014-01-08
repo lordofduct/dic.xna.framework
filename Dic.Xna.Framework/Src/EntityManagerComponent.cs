@@ -141,7 +141,10 @@ namespace Dic.Xna.Framework
                     case UpdatePhase.CleanUp:
                         lock (_lock)
                         {
-                            _componentInitializeCache.Add(component);
+                            if (_entities.Contains(component.Entity))
+                            {
+                                _componentInitializeCache.Add(component);
+                            }
                         }
                         break;
                 }
@@ -295,10 +298,12 @@ namespace Dic.Xna.Framework
 
             base.Update(gameTime);
 
+            //initialize all all entities and their components
             _phase = UpdatePhase.InitializingPhase;
             _updateThread = System.Threading.Thread.CurrentThread; //store a reference to the currently running thread
 
-            if (_initializeCache.Count > 0)
+            //we keep doing this until we register empty, this catches all entities created during the Initialize call to any component
+            while (_initializeCache.Count > 0)
             {
                 Entity[] cache;
                 //lock onto the cache and get all the entities out, this way when Awake and Start are called those messages can create Entities without issue
