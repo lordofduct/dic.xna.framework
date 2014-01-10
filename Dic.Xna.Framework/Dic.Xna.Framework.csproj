@@ -59,7 +59,8 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Src\Collections\UniqueList.cs" />
-    <Compile Include="Src\DicGame.cs" />
+    <Compile Include="Src\SpriteRenderer.cs" />
+    <Compile Include="Src\SpriteRenderManagerComponent.cs" />
     <Compile Include="Src\Utils\ConvertUtil.cs" />
     <Compile Include="Src\Utils\DblMathUtil.cs" />
     <Compile Include="Src\Utils\MathUtil.cs" />
