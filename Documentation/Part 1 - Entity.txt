@@ -1,0 +1,49 @@
+###############
+# INTRODUCTION
+
+When creating a game and wanting to organize your code, you kind of run into an issue. There's a LOT of code in making a game that deal with a lot of different stuff from graphics, to AI, physics, UI, etc. XNA doesn't exactly lay out an easy way to organize this stuff, and instead just throws you into a Game class with the main access methods for loading, unloading, updating and drawing.
+
+Are we really expected to put all our code in here?
+
+Of course not. The problem is, the XNA framework doesn't want to lock you into any one given way to organize your code. They instead leave it to you to decide. Crap part is, what if you don't have any idea where to start!? Well that's what this write up is going to jump into.
+
+So lets step back away from all the little parts of games. Forget about sprites and meshes, don't concern yourself with vectors and matrices. Lets organize this into 2 main categories. There's a bunch of code that is very common from game to game... this is the code for actually setting up the framework of a game, any game, independent of gameplay. We can call this the 'engine', with out we can't do shit to make a game. The other stuff is the actual game. It's the part that makes this a game and not just some set of programmatic structures that facilitate rendering graphics.
+
+Engine framework - where all the weird math and rendering and super technical hub-bub goes on.
+
+Game code - code that actually pertains to our gameplay ideas.
+
+The plan here is to create a framework to act as an engine to a group of games. We want to generalize all the necessary code to make a game, this way we can reuse that code over and over for different games. This is what is often called a "Game Engine". XNA isn't a game engine, it's a framework of code for developing against a graphics device with managed code. It doesn't do much to assist in creating an actual game! It expects you to do a lot of that gamework. How do you draw a level, save that level, and then load it in your game? Are we really expected to hand code that stuff? How about saving gameplay? Physics? AI? Where is this stuff??? It's not there... that's a Game Engine. And that's what we want to start laying the foundation for.
+
+
+
+###############
+# Entity
+
+So the first part we're going to explore is the problem of describing a game as objects. XNA is designed with an object oriented approach, so might as work within that design. So lets consider a game to be a series of interactive scenes. One scene may be a menu, another is the first level in a game, yet another is a cut scene in the game full of exposition about the story.
+
+These scenes are full of things. We're kind of emulating a "world", which is a lot different from most other software where are objects are more ethereal, unnoticed by the user. This on the other hand, it's an entire world of things the user interacts with. So lets organize all those things into a single concept. Now these objects aren't all the same though. We're going to have objects for various things that range in ability. An object to represent a checkpoint, another that is just a rendered background prop, another that is a rendered prop with physics capabilities, another that is the avatar of the player, another that is a mob. These abilities are all unique to an extent, but are often a mix and match of abilities.
+
+One object may be a background prop and just needs a mesh associated with it to render.
+
+Another may be a box you can jump on which requires both a mesh and collider information.
+
+Another, like a checkpoint, may need collider information but no mesh information as its invisible.
+
+Problem is, inheritance doesn't facilitate this nicely. You can't gather these features together easily via inheritance. Furthermore, what if you wanted to turn thse features on or off. Say you have a box with physics attributes attached to it, but you only turn the physics on after some triggered event.
+
+Well, what if we used composition instead of inheritance.
+
+Composition is when you group several objects together and treat them as a single object. Depending on which objects you composite together, you get different functionality ([url=http://en.wikipedia.org/wiki/Composite_pattern]See here for more information on composite pattern[/url]). XNA actually has part of its framework set up to facilitate this pattern for the 'Game' class. In it you can attach GameComponent objects to the Game to extend its functionality. You can add or remove and even disable them as the program runs.
+
+Lets adapt this model. Instead of inheriting from Entity every time we want to describe a new type of object in our scenes, we instead attach various components to it. If we need new functionality, we create a new component and attach it to the object.
+
+(Note - this design will also make serializing our scene easier. We won't get into that now though, that'll be for a later entry in this series)
+
+This design is not of my own, instead its been used in several populare game engines out there. Unity, Unreal, Source and many more use this. The name of the scene object varies from engine to engine; I've seen it called GameObject, Actor, and also the name we're going to give it.
+
+We're going to call this object an 'Entity' and its components 'EntityComponent'.
+
+So lets get into the design of this thing, here is the diagram of our Entity framework:
+
+**INSERT IMAGE HERE entity_framework.png**

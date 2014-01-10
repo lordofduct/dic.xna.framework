@@ -11,9 +11,10 @@ namespace Dic.Xna.Framework
     /// Represents a Transform of an entity, and facilitates nesting Entities.
     /// </summary>
     /// <remarks>
-    /// I personally don't like this implementation, was playing around with ideas to storing both local and global positions within the transform 
-    /// to speed up retrieving the values for various stuff. It's not the best, and needs some work. As long as the public interface doesn't change 
-    /// though this can be tweaked as we move forward with the code base.
+    /// I personally don't like this implementation, was playing around with ideas to storing both local and global 
+    /// positions within the transform to speed up retrieving the values for various stuff. It's not the best, and 
+    /// needs some work. As long as the public interface doesn't change though this can be tweaked as we move forward 
+    /// with the code base.
     /// </remarks>
     public sealed class Transform : EntityComponent
     {

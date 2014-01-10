@@ -25,8 +25,9 @@ namespace Dic.Xna.Framework
         #endregion
 
         /// <summary>
-        /// Called on main update thread when initializing the component. Components initialize in random order, you can retrieve other components on 
-        /// self but don't inter-communicate. Wait for Start before you inter-communicate. Good for initializing fields.
+        /// Called on main update thread when initializing the component. Components initialize in random order, you can 
+        /// retrieve other components on self but don't inter-communicate. Wait for Start before you inter-communicate. 
+        /// Good for initializing fields.
         /// </summary>
         protected virtual void Initialize()
         {
@@ -34,8 +35,8 @@ namespace Dic.Xna.Framework
         }
 
         /// <summary>
-        /// Called on main update thread the first time the component is updated. This happens after all components have initialized so inter-communication 
-        /// between components is safe.
+        /// Called on main update thread the first time the component is updated. This happens after all components have 
+        /// initialized so inter-communication between components is safe.
         /// </summary>
         protected virtual void Start()
         {
@@ -64,7 +65,7 @@ namespace Dic.Xna.Framework
             get { return _owner.Transform; }
         }
 
-        public Entity.EntityComponentCollection Components
+        public EntityComponentCollection Components
         {
             get { return _owner.Components; }
         }

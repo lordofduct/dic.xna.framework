@@ -16,16 +16,41 @@ namespace GameEntityTutorial
     /// <summary>
     /// This is the main type for your game
     /// </summary>
-    public class ExampleGame : DicGame
+    public class ExampleGame : Game
     {
+
+        #region Fields
+
         GraphicsDeviceManager graphics;
+
+        private EntityManagerComponent _entityManager;
+        private RenderManagerComponent _renderManager;
+
+        #endregion
+
+        #region CONSTRUCTOR
 
         public ExampleGame()
             : base()
         {
             graphics = new GraphicsDeviceManager(this);
             Content.RootDirectory = "Content";
+
+            this.Components.Add(_entityManager = new EntityManagerComponent(this));
+            this.Components.Add(_renderManager = new RenderManagerComponent(this, _entityManager));
         }
+
+        #endregion
+
+        #region Properties
+
+        public EntityManagerComponent EntityManager { get { return _entityManager; } }
+
+        public RenderManagerComponent RenderManager { get { return _renderManager; } }
+
+        #endregion
+
+        #region Game Events
 
         /// <summary>
         /// Allows the game to perform any initialization it needs to before starting to run.
@@ -74,6 +99,8 @@ namespace GameEntityTutorial
 
 
         }
+
+        #endregion
 
     }
 }
