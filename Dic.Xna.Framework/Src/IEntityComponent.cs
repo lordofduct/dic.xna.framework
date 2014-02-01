@@ -25,7 +25,7 @@ namespace Dic.Xna.Framework
         Game Game { get; }
         EntityManagerComponent EntityManager { get; }
         Transform Transform { get; }
-        Entity.EntityComponentCollection Components { get; }
+        EntityComponentCollection Components { get; }
 
         /// <summary>
         /// Called on main update thread when initializing the component. Components initialize in random order, you can retrieve other components on 

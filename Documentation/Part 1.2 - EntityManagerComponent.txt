@@ -1,0 +1,88 @@
+########################
+# EntityManagerComponent
+
+NOTE - the following code examples are from January 2014, implementations of the methods may change. The public interfaces of the classes should stay roughly the same (unless something deprecates), though new public methods MAY get added in the future. Keep this historical aspect in mind if you're reading this months/years after January 2014.
+
+
+So we're at the actual EntityManagerComponent, the implementation of which gets a little odd (and may still have bugs in it I don't know about at this current time while writing this article). Unlike before where I just went over the classes, method by method, we're going to instead talk about the interface of it.
+
+As with all GameComponents, we have to inherit from GameComponent in the XNA framework. We want to do this so that the class is modular and ties directly into the XNA framework and is managed directly from there. This means we don't have to manually call update or any of that nonsense, it just does its job.
+
+We then created an interface on it that allows us to access it in reasonable manner.
+
+[url=https://github.com/lordofduct/dic.xna.framework/blob/master/Dic.Xna.Framework/Src/EntityManagerComponent.cs]EntityManagerComponent Reference[/url]
+
+[b]EntityManagerComponent Interface[/b]
+
+RegisterEntity(entity:Entity) : void
+This method is internal and is the registration hook for all entities. When an Entity is constructed it requires you pass in the manager that is managing it, it then constructs itself and registers with the manager in question via this method. It's marked as internal because it's an integral part of the framework that the user of the framework doesn't need to concern themselves with.
+
+
+RegisterComponent(component:IEntityComponent) : void
+Just as Entity's need to be managed, so will their components. The components will have to be initialized and started, and this will start that process. Though the EntityManagerComponent won't actually need to store long term references to the components, it still needs to do this as the initializing process is directly tethered to the game's update loop, and this class is where that is accessible.
+
+
+DestroyEntity(entity:Entity) : void
+We will need a way to destroy entities and put them through their disposal process. This method can be called directly, or the Entity.Dispose method can be used instead.
+
+
+DestroyComponent(component:IEntityComponent) : void
+We will also need a way to destroy components and put them through their disposal process. This method can be called directly, or the IEntityComponent.Dispose method can be used instead. Note, we have a separate method for this so that a component can be individually destroyed while keeping the Entity alive.
+
+
+CreateEntity() : Entity
+A factory method for creating new entity instances. This is the preferred method of creating entities.
+
+
+CreateEntity(componentTypes:Type[]) : Entity
+Another factory method for creating new entity instances that also allows for component type parameters, which are components that will be attached immediately upon creation.
+
+
+Find(string name) : Entity
+A method to locate an entity within the manager by its name. This method currently only supports direct name searching, but has plans to later expand its search capabilities to search in transforms that are parented with one another.
+
+
+Update(gameTime:GameTime) : void
+This is the main update loop hook, this method should never be called directly and instead is handled by the GameComponent framework of XNA.
+
+
+
+[b]Entity/IEntityComponent Registration[/b]
+
+So lets talk about this. An Entity represents an object in the game world. An Entity can have components attached to it at creation, or during its life time. Those components must be initialized, and updated, all on the main game loop, and in a predetermined order that allows for thread safety. The initialization goes through 3 main phases:
+
+Initialize - allow the component to construct itself and set any initial values, happens out of order
+
+Start - allow the component to do any inter-component communication before the first time it is update
+
+Update - the update cycle
+
+Thread safety is our biggest concern here, because Entities may be created on a separate thread by the programmer utilizing the framework.
+
+[code]
+/// <summary>
+/// Rules:
+/// lock in phases None, InitializingPhase, StartingPhase
+/// never modify Entities list in UpdatingPhase
+/// </summary>
+private enum UpdatePhase
+{
+	None = 0,
+	InitializingPhase = 1,
+	StartingPhase = 2,
+	UpdatingPhase = 3,
+	CleanUp = 4
+}
+
+private System.Threading.Thread _updateThread = null;
+private UpdatePhase _phase = UpdatePhase.None;
+
+private object _lock = new object();
+private List<Entity> _entities = new List<Entity>();
+private List<Entity> _initializeCache = new List<Entity>();
+private List<IEntityComponent> _componentInitializeCache = new List<IEntityComponent>();
+private ConcurrentQueue<IEntityComponent> _startPool = new ConcurrentQueue<IEntityComponent>();
+private List<Entity> _deadEntityList = new List<Entity>();
+[/code]
+
+We have several fields, and a private enum that is going to help us here.

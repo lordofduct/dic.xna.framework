@@ -58,7 +58,16 @@
     <Reference Include="Tao.Sdl, Version=1.2.13.0, Culture=neutral, PublicKeyToken=9c7a200e36c0094e, processorArchitecture=MSIL" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Src\Collections\ListDictionary.cs" />
     <Compile Include="Src\Collections\UniqueList.cs" />
+    <Compile Include="Src\Collections\WeakInternalTypes.cs" />
+    <Compile Include="Src\Collections\WeakKeyDictionary.cs" />
+    <Compile Include="Src\Collections\WeakList.cs" />
+    <Compile Include="Src\Collections\WeakValueDictionary.cs" />
+    <Compile Include="Src\EntityComponentCollection.cs" />
+    <Compile Include="Src\EntityBuilder.cs" />
+    <Compile Include="Src\Notification.cs" />
+    <Compile Include="Src\NotificationGameComponent.cs" />
     <Compile Include="Src\SpriteRenderer.cs" />
     <Compile Include="Src\SpriteRenderManagerComponent.cs" />
     <Compile Include="Src\Utils\ConvertUtil.cs" />

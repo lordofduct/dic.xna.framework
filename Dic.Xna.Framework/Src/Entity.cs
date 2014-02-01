@@ -25,20 +25,31 @@ namespace Dic.Xna.Framework
 
         #region CONSTRUCTOR
 
-        public Entity(EntityManagerComponent manager) : this(null, manager)
-        { 
+        public Entity(string name)
+        {
+            _name = name;
+            _components = new EntityComponentCollection(this);
+            _transform = _components.AddComponent<Transform>();
         }
 
         public Entity(string name, EntityManagerComponent manager)
+            : this(name)
         {
             if (manager == null) throw new ArgumentNullException("manager");
+            manager.RegisterEntity(this);
+        }
 
-            _name = name;
+        internal void RegisterManager(EntityManagerComponent manager)
+        {
+            if (_manager != null) throw new InvalidOperationException("Can not register an Entity that is already registered.");
+            if (manager == null) throw new ArgumentNullException("manager");
+
             _manager = manager;
-            _components = new EntityComponentCollection(this);
-            _transform = _components.AddComponent<Transform>();
 
-            _manager.RegisterEntity(this); //must register at end of constructing
+            foreach (var comp in _components)
+            {
+                _manager.RegisterComponent(comp);
+            }
         }
 
         internal void Update(GameTime gameTime)
@@ -52,6 +63,11 @@ namespace Dic.Xna.Framework
             if (meth != null)
             {
                 _updateDelegates += meth;
+            }
+
+            if (_manager != null)
+            {
+                _manager.RegisterComponent(comp);
             }
         }
 

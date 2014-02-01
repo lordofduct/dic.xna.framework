@@ -69,7 +69,6 @@ namespace Dic.Xna.Framework
                 }
             }
 
-            _owner.EntityManager.RegisterComponent(comp);
             _owner.OnComponentAdd(comp);
 
             return comp;
@@ -112,7 +111,6 @@ namespace Dic.Xna.Framework
                 }
             }
 
-            _owner.EntityManager.RegisterComponent(comp);
             _owner.OnComponentAdd(comp);
 
             return comp;

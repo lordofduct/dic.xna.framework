@@ -1,0 +1,689 @@
+########################
+# Entity breakdown (Entity, EntityComponentCollection, EntityComponent)
+
+NOTE - the following code examples are from January 2014, implementations of the methods may change. The public interfaces of the classes should stay roughly the same (unless something deprecates), though new public methods MAY get added in the future. Keep this historical aspect in mind if you're reading this months/years after January 2014.
+
+
+So I can't just go into one class, because the root of all this is a relationship of classes. Our thing is we want to create a object that represents an game entity (the [url=https://github.com/lordofduct/dic.xna.framework/blob/master/Dic.Xna.Framework/Src/Entity.cs]Entity[/url] class), something that manages those game entities (the [url=https://github.com/lordofduct/dic.xna.framework/blob/master/Dic.Xna.Framework/Src/EntityManagerComponent.cs]EntityManagerComponent[/url]), and how we extend the functionality of the game entity (the [url=https://github.com/lordofduct/dic.xna.framework/blob/master/Dic.Xna.Framework/Src/EntityComponentCollection.cs]EntityComponentCollection[/url]).
+
+The entity class itself is fairly basic. Our entities at its root, with nothing attached to it should be as minimal as possible. These things should be representing things as complex as the player itself, to as simple as a position where a player can spawn. So when we dig into the class, it's fairly basic:
+
+[b]######[/b]
+[b]Entity[/b]
+
+https://github.com/lordofduct/dic.xna.framework/blob/master/Dic.Xna.Framework/Src/Entity.cs
+
+[b]Fields[/b]
+In it we find just a handful of fields (note I use the _ prefix for private fields, I find them readable):
+
+[code]
+private string _name;
+
+private EntityManagerComponent _manager;
+private EntityComponentCollection _components;
+private Transform _transform;
+
+private Action<GameTime> _updateDelegates;
+[/code]
+
+_name:
+We have a name to identify the entity. This can help in any abstract manner for identifying unique entities.
+
+_manager:
+A reference to the manager that created this entity. An entity that isn't managed won't be very useful, so the constructor is going to force the manager to be non-null. Best way to create entities is using the manager's CreateEntity method.
+
+_components:
+A reference to the component collection that stores the various components that extend an entity. We can add and remove components at run time via this object.
+
+_transform:
+All entities have a Transform associated with it to describe it's location in the game world. The transform will also be a component inside the component collection.
+
+_updateDelegates:
+This is the weird entry in the list. This has to do with the game loop's update cycle. Components will want to easily hook into the update loop, but not all components. The number of components can extremely large, so calling a virtual method on ALL components in existence can be time consuming, especially if half of them don't even need it. So instead we store the update methods of those components that require it so we can shorten that call stack every update cycle (thusly speeding up the entire system). I chose to store it within the gameobject that owns the component for quick disposability.
+
+
+[b]Constructor[/b]
+
+[code]
+public Entity(EntityManagerComponent manager) : this(null, manager)
+{ 
+}
+
+public Entity(string name, EntityManagerComponent manager)
+{
+	if (manager == null) throw new ArgumentNullException("manager");
+
+	_name = name;
+	_manager = manager;
+	_components = new EntityComponentCollection(this);
+	_transform = _components.AddComponent<Transform>();
+
+	_manager.RegisterEntity(this); //must register at end of constructing
+}
+[/code]
+
+You'll probably never directly access this constructor if you use the manager's CreateEntity method, but this is where we enforce an association with a manager, and initialize our various fields. We register the entity with the manager at this point as well, we'll get to the registration when I break down the manager class.
+
+[b]Update Support[/b]
+You'll also notice a couple internal methods here as well:
+
+[code]
+internal void Update(GameTime gameTime)
+{
+	if(_updateDelegates != null) _updateDelegates(gameTime);
+}
+
+internal void OnComponentAdd(IEntityComponent comp)
+{
+	var meth = ObjUtil.ExtractDelegate<Action<GameTime>>(comp, EntityConstants.MSG_UPDATE);
+	if (meth != null)
+	{
+		_updateDelegates += meth;
+	}
+}
+
+internal void OnComponentRemoved(IEntityComponent comp)
+{
+	var meth = ObjUtil.ExtractDelegate<Action<GameTime>>(comp, EntityConstants.MSG_UPDATE);
+	if (meth != null)
+	{
+		_updateDelegates -= meth;
+	}
+}
+[/code]
+
+Here are some framework specific methods, they're flagged internal because they should NEVER be called directly. Instead the EntityManagerComponent and the EntityComponentCollection access these methods. The EntityComponentCollection informs the Entity when a component is added and removed, this is where we extract a reference to an 'update' method on said component, if one exists, and store a reference to it.
+
+Then the manager calls update on all entities it manages, and the entity calls update on any components that have an update method.
+
+Note I call a utility method 'ObjUtil.ExtractDelegate', this can be found in one of the many utility classes I've included with the framework.
+
+https://github.com/lordofduct/dic.xna.framework/blob/master/Dic.Xna.Framework/Src/Utils/ObjUtil.cs
+
+[code]
+public static T ExtractDelegate<T>(object obj, string name, bool ignoreCase = false, bool throwOnBindFailure = false) where T : class
+{
+	if (obj == null) throw new System.ArgumentNullException("obj");
+	var delegateType = typeof(T);
+	if (!delegateType.IsSubclassOf(typeof(System.Delegate))) throw new System.ArgumentException("type must be a delegate type");
+
+	return System.Delegate.CreateDelegate(delegateType, obj, name, ignoreCase, throwOnBindFailure) as T;
+}
+[/code]
+
+I use this reflection technique so that when you write a component that you want to be updated, you just have to implement a method named 'Update' and follow the delegate contract of Action<GameTime>. No other work is needed to be done, and your component will be updated.
+
+
+[b]Properties[/b]
+
+[code]
+public string Name { get { return _name; } }
+
+public Game Game { get { return _manager.Game; } }
+
+public EntityManagerComponent EntityManager { get { return _manager; } }
+
+public EntityComponentCollection Components { get { return _components; } }
+
+public Transform Transform { get { return _transform; } }
+[/code]
+
+This is pretty self-explanatory, we let out readonly access to various fields.
+
+
+[b]Public Methods[/b]
+
+[code]
+public void SendMessage<T>(string msg, params object[] args) where T : class
+{
+	Delegate messageReceiver = null;
+
+	foreach (var comp in this.Components)
+	{
+		var meth = ObjUtil.ExtractDelegate<T>(comp, msg);
+		if (meth != null)
+		{
+			messageReceiver = Delegate.Combine(messageReceiver as Delegate, meth as Delegate);
+		}
+	}
+
+	if (messageReceiver != null)
+	{
+		try
+		{
+			messageReceiver.DynamicInvoke(args);
+		}
+		catch
+		{
+
+		}
+	}
+}
+[/code]
+
+Now this method isn't what you would call efficient. I plan to change the implementation of it in the future, but to get the framework out the door I went with a simple reflection model. This method allows you to call a method on all components by name and specific delegate contract (the generic <T>), if the method exists. This is similar to the 'update' thing above, where only those components that want to implement the message have it called. You can define any message you want with out having to modify the Entity class to support it. Just define a delegate, and a name, and you're ready to call SendMessage.
+
+The innefficiency of this method is what drove me to store the 'update' in a delegate at add/remove of the component. Most messages aren't called EVERY update on EVERY entity, so the slowness isn't a big deal if you're not calling it constantly. And of course, we'll be changing this implementation in the future.
+
+
+[b]IDisposable Implementation[/b]
+
+[code]
+private bool _bDisposed;
+
+private void Dispose(bool disposing)
+{
+	if (!_bDisposed)
+	{
+		_bDisposed = true;
+		_manager.DestroyEntity(this); //called after _bDisposed is set true, this way dispose isn't ran twice by DestroyEntity
+
+		if (disposing)
+		{
+			//disposed managed stuff
+			_updateDelegates = null;
+
+			foreach (var comp in this.Components)
+			{
+				comp.Dispose();
+			}
+		}
+		//disposed unmanaged stuff - nothing unmanaged here
+	}
+}
+
+~Entity()
+{
+	this.Dispose(false);
+}
+
+public void Dispose()
+{
+	Dispose(true);
+	GC.SuppressFinalize(this);
+}
+
+public bool Disposed
+{
+	get { return _bDisposed; }
+}
+[/code]
+
+Lastly we find the implementation of the IDisposable interface. Because our components may have reference to unmanaged memory (like textures and sounds and the sort), we need a way to destroy an Entity and have it tell its components to destroy themselves and purge their memory.
+
+Now, this method may seem a little cyclical in that it calls 'DestroyEntity' on the EntityManager, but that EntityManager calls Dispose on the entity in turn. This is because we don't know if the programmer using the framework is going to call 'Dispose' on the entity, or destroy it through the EntityManager interface. So we store a bool '_bDisposed' to track if Dispose has been called. If it has, it's being called a second time (possibly due to this cyclical nature) and we should ignore it... breaking the loop. This is why _bDisposed is set BEFORE we call DestroyEntity. When we get the component implementation, we'll see the same cyclical design, for the same reason.
+
+We also implement a Destructor and call Dispose from it. We pass in a 'false' value for the 'disposing' param so that the Dispose method knows we're being called via Destructor. This is necessary because the Entity MUST do some work before being removed by garbage colleciton. Components will also have this same design in them as they may have unmanaged stuff to clean up.
+
+
+[b]#########################[/b]
+[b]EntityComponentCollection[/b]
+Speaking of components, lets get to the EntityComponentCollection:
+
+https://github.com/lordofduct/dic.xna.framework/blob/master/Dic.Xna.Framework/Src/EntityComponentCollection.cs
+
+Most of the frameworks which we're mimicing don't actually implement it as a separate collection class and instead make this part of the Entity itself. Personally though... I like my clases to encapsulate their one simple purpose. An Entity represents a game entity, the transform represents its position, and the component collection stores its components.
+
+This collection isn't like most collections you come by. And this is because we're following what is the 'component design pattern', which is a version of the 'composite design pattern'. What we are effectively attempting to do is allow a specific type (Entity in this case) inherit from multiple different types (our various components), and do all this at run time. This means we're working with an idea like type inheritance. We want to say that our Entity inherits the ability of a 'Transform', 'Renderer', and a 'GamePlayerMotor'.
+
+Thing is we would inherit from Renderer twice, we can't be twice the renderer. We also want to be able to access these components by type, so that way each type have their interfaces for accessing that implementation. We want to be able to access the 'Position' property of the Transform... well we need to easily get at the Transform component.
+
+To do this we grant access via a generic methods where we supply the Type of the component we want, it then returns a component, if one exists, for that Type.
+
+So lets get into the implementation...
+
+
+[b]Fields[/b]
+
+[code]
+        private Entity _owner;
+
+        private List<IEntityComponent> _lst = new List<IEntityComponent>();
+[/code]
+
+We only have two fields. A reference to the Entity that owns this collection, and a list where we store all the components.
+
+
+[b]Constructor[/b]
+
+[code]
+internal EntityComponentCollection(Entity owner)
+{
+	_owner = owner;
+}
+[/code]
+
+The constructor accepts the Entity its being attached to, this is needed for messaging back and forth between the collection and the Entity... you know, the OnComponentAdded and OnComponentRemoved messages from before.
+
+The constructor is also internal. A EntityComponentCollection should NEVER be created directly, and is instead created by the Entity it is owned by in the Entity constructor.
+
+
+[b]Public Methods[/b]
+
+[code]
+public T AddComponent<T>() where T : class, IEntityComponent
+{
+	T comp = this.GetComponent<T>();
+	if (comp != null) return comp;
+
+	try
+	{
+		comp = System.Activator.CreateInstance<T>();
+	}
+	catch
+	{
+		return null;
+	}
+
+	if (comp is EntityComponent)
+	{
+		_lst.Add(comp);
+		(comp as EntityComponent).OnAddedToEntity(_owner);
+	}
+	else
+	{
+		var meth = ObjUtil.ExtractDelegate<Action<Entity>>(comp, EntityConstants.MSG_ONADDEDTOENTITY);
+		if (meth != null)
+		{
+			_lst.Add(comp);
+			meth(_owner);
+		}
+		else
+		{
+			throw new EntityComponentMalformedException("Custom rolled IEntityComponents must contain a 'OnAddedToEntity' method present as a member.");
+		}
+	}
+
+	_owner.EntityManager.RegisterComponent(comp);
+	_owner.OnComponentAdd(comp);
+
+	return comp;
+}
+
+public IEntityComponent AddComponent(Type tp)
+{
+	if (tp == null) throw new ArgumentNullException("tp");
+	if (!typeof(IEntityComponent).IsAssignableFrom(tp)) throw new ArgumentException("Type must implement IEntityComponent.");
+
+	IEntityComponent comp = this.GetComponent(tp);
+	if (comp != null) return comp;
+
+	try
+	{
+		comp = System.Activator.CreateInstance(tp) as IEntityComponent;
+
+	}
+	catch
+	{
+		return null;
+	}
+
+	if (comp is EntityComponent)
+	{
+		_lst.Add(comp);
+		(comp as EntityComponent).OnAddedToEntity(_owner);
+	}
+	else
+	{
+		var meth = ObjUtil.ExtractDelegate<Action<Entity>>(comp, EntityConstants.MSG_ONADDEDTOENTITY);
+		if (meth != null)
+		{
+			_lst.Add(comp);
+			meth(_owner);
+		}
+		else
+		{
+			throw new EntityComponentMalformedException("Custom rolled IEntityComponents must contain a 'OnAddedToEntity' method present as a member.");
+		}
+	}
+
+	_owner.EntityManager.RegisterComponent(comp);
+	_owner.OnComponentAdd(comp);
+
+	return comp;
+}
+
+public bool HasComponent<T>() where T : class, IEntityComponent
+{
+	var tp = typeof(T);
+
+	return _lst.Any((c) => c.GetType() == tp);
+}
+
+public bool HasComponent(Type tp)
+{
+	if (tp == null) throw new ArgumentNullException("tp");
+	if (!typeof(IEntityComponent).IsAssignableFrom(tp)) throw new ArgumentException("Type must implement IEntityComponent.");
+
+	return _lst.Any((c) => c.GetType() == tp);
+}
+
+public bool HasLikeComponent<T>() where T : class, IEntityComponent
+{
+	return _lst.Any((c) => c is T);
+}
+
+public bool HasLikeComponent(Type tp)
+{
+	if (tp == null) throw new ArgumentNullException("tp");
+	if (!typeof(IEntityComponent).IsAssignableFrom(tp)) throw new ArgumentException("Type must implement IEntityComponent.");
+
+	return _lst.Any((c) => tp.IsAssignableFrom(c.GetType()));
+}
+
+public T GetComponent<T>() where T : class, IEntityComponent
+{
+	var tp = typeof(T);
+	return (from c in _lst where c.GetType() == tp select c as T).FirstOrDefault();
+}
+
+public IEntityComponent GetComponent(Type tp)
+{
+	if (tp == null) throw new ArgumentNullException("tp");
+	if (!typeof(IEntityComponent).IsAssignableFrom(tp)) throw new ArgumentException("Type must implement IEntityComponent.");
+
+	return (from c in _lst where c.GetType() == tp select c).FirstOrDefault();
+}
+
+public T GetLikeComponent<T>() where T : class, IEntityComponent
+{
+	return (from c in _lst where c is T select c as T).FirstOrDefault();
+}
+
+public IEntityComponent GetLikeComponent(Type tp)
+{
+	if (tp == null) throw new ArgumentNullException("tp");
+	if (!typeof(IEntityComponent).IsAssignableFrom(tp)) throw new ArgumentException("Type must implement IEntityComponent.");
+
+	return (from c in _lst where tp.IsAssignableFrom(c.GetType()) select c).FirstOrDefault();
+}
+
+public IEnumerable<T> GetComponents<T>() where T : class, IEntityComponent
+{
+	return from c in _lst where c is T select c as T;
+}
+
+public IEnumerable<IEntityComponent> GetComponents(Type tp)
+{
+	if (tp == null) throw new ArgumentNullException("tp");
+	if (!typeof(IEntityComponent).IsAssignableFrom(tp)) throw new ArgumentException("Type must implement IEntityComponent.");
+
+	return from c in _lst where tp.IsAssignableFrom(c.GetType()) select c;
+}
+
+
+
+public bool RemoveComponent<T>() where T : class, IEntityComponent
+{
+	var comp = this.GetComponent<T>();
+	if (comp != null) return this.RemoveComponent(comp);
+
+	return false;
+}
+
+public bool RemoveComponent(Type tp)
+{
+	if (tp == null) throw new ArgumentNullException("tp");
+	if (!typeof(IEntityComponent).IsAssignableFrom(tp)) throw new ArgumentException("Type must implement IEntityComponent.");
+
+	var comp = this.GetComponent(tp);
+	if (comp != null) return this.RemoveComponent(comp);
+
+	return false;
+}
+
+public bool RemoveComponent(IEntityComponent comp)
+{
+	if (_lst.Contains(comp))
+	{
+		_lst.Remove(comp);
+		comp.Dispose();
+		return true;
+	}
+
+	return false;
+}
+[/code]
+
+This part is the big part, and it's the general interface of our component collection. Let's go through them one by one.
+
+AddComponent<T>() : T
+AddComponent(Type tp) : IEntityComponent
+
+You'll first notice that most of these methods have 2 overload versions of themselves. One uses generics, the other uses the System.Type object. We do this so that you can still access components with out a hard coded type. Say you only have a reference to the System.Type of the component, and you need to create it... well, this will let you.
+
+Now, when adding components, we actually don't add them directly as objects. Instead we allow the component collection to create them using reflection. There's a reason for this actually... we want to be able to serialize our Entities, which means they're going to be created by reflection anyways. Furthermore, a component shouldn't be doing a whole lot in its constructor. The reason is, everything isn't exactly ready during its constructor. It hasn't been registered, or attached to an entity, or anything. Instead we have a couple methods of the IEntityComponent that allow you to hook into those initializing moments at the right time. And we allow the EntityManager to decide when those moments are. When we get the the EntityManagerComponent class, you'll see why.
+
+This means ALL components MUST have 0 parameter constructors.
+
+
+HasComponent<T>() : bool
+HasComponent(Type tp) : bool
+
+A simple method testing if the collection contains methods of the type supplied.
+
+
+HasLikeComponent<T>() : bool
+HasLikeComponent(Type tp) : bool
+
+Lets say you created an interface that inherits from IEntityComponent for contractual purposes. And you need to access the component via said contract instead of via its direct type. Maybe you have an IMobMotor for all motors that control mobs (enemies) in your game, and they all implement this interface, but are unique in their own right. This allows you to get at them as such.
+
+The same goes for if you have an abstract component type, which you then have a group of components inherit from. Like an AbstractMobMotor, and then various FlyingMobMotor, WalkingMobMotor, SwimmingMobMotor. And you just want to get at it as an AbstractMobMotor.
+
+
+GetComponent<T>() : T
+GetComponent(Type tp) : IEntityComponent
+
+Get's a component that had previously been added. Note the generic version returns it as the type you requested by.
+
+
+GetLikeComponent<T>() : T
+GetComponent(Type tp) : IEntityComponent
+
+Get's a component like the type supplied. This is similar to HasLike, but instead of seeing if it HAS a component like some type, it actually gets it.
+
+There's a problem though, there could technically be more than one component 'Like' some type attached to the Entity. This will only return the FIRST component it comes across. If you want all the components that are like this, well that's the purpose of the next two methods.
+
+
+GetComponents<T>() : IEnumerable<T>
+GetComponents(Type tp) : IEnumerable<IEntityComponent>
+
+This returns all the components that inherit from, or implement, some type. You know, in case you have more than one component that inherits/implements some type.
+
+
+RemoveComponent<T>() : bool
+RemoveComponent(Type tp) : bool
+RemoveComponent(IEntityComponent comp) : bool
+
+And lastly we have the methods for removing components from this collection. This one has a 3rd overload that allows you to pass in a direct reference to the component.
+
+A true is returned if the remove succeeded (basically if the collection contained a component that matched the parameter).
+
+Note, this method also disposes the component. This is because components are managed by the EntityManager and should NEVER exist with out an Entity it is related to. This is related to the reasons about the constructor above.
+
+
+[b]IEnumerable Implementation[/b]
+
+[code]
+public IEnumerator<IEntityComponent> GetEnumerator()
+{
+	return _lst.GetEnumerator();
+}
+
+System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()
+{
+	return _lst.GetEnumerator();
+}
+[/code]
+
+And of course any properly designed collection should be enumerable.
+
+
+[b]###############[/b]
+[b]EntityComponent[/b]
+
+https://github.com/lordofduct/dic.xna.framework/blob/master/Dic.Xna.Framework/Src/IEntityComponent.cs
+https://github.com/lordofduct/dic.xna.framework/blob/master/Dic.Xna.Framework/Src/EntityComponent.cs
+
+Next up is our abstract class for EntityComponent, it implements IEntityComponent, and all components should inherit from this class. The EntityComponentCollection does most of the work that this class needs for implementation, but a couple little things are unique to this. I'm trying to remove as much as possible from it to maybe allow to implement IEntityComponent yourself, as it stands it's best not to though. If you must, check the comments for the class.
+
+
+[b]Fields[/b]
+
+[code]
+private Entity _owner;
+[/code]
+
+We just need a reference to the Entity that this component is attached to.
+
+
+[b]Constructor[/b]
+
+[code]
+        internal void OnAddedToEntity(Entity owner)
+        {
+            _owner = owner;
+        }
+[/code]
+
+OK, that doesn't look like a constructor... what the hell guys? Well, it's not. Remember how I said components shouldn't have constructors with any code in it... well, that goes for this implementation as well. We can't add the component to an entity until AFTER it's constructed, so this is where that's done. Note the 'internal' access modifier, it is framework specific.
+
+
+[b]Then how do we construct???[/b]
+
+[code]
+/// <summary>
+/// Called on main update thread when initializing the component. Components initialize in random order, you can 
+/// retrieve other components on self but don't inter-communicate. Wait for Start before you inter-communicate. 
+/// Good for initializing fields.
+/// </summary>
+protected virtual void Initialize()
+{
+
+}
+
+/// <summary>
+/// Called on main update thread the first time the component is updated. This happens after all components have 
+/// initialized so inter-communication between components is safe.
+/// </summary>
+protected virtual void Start()
+{
+
+}
+[/code]
+
+Here is where the actual constructor stuff exists. Note, I don't make them abstract, because I don't want to force the custom component to implement these, only allow them to if they must.
+
+You'll notice the comments on them, read that, come back here.
+
+You done? Ok.
+
+What that basically means is that Initialize should be used to instantiate any fields you need to... this acts as what you'd consider a 'Constructor'. Where as the 'Start' method is called just before 'Update' is called the first time. Some components will expect other components to exist on the Entity... for example the Transform component is a component you'll access rather frequently! Well... you can't until after it's been initialized, and you don't know when that is. Well, you can be sure that it has been initialized when Start is called.
+
+We will get more in depth about the relationship of these two methods when we get the EntityManagerComponent portion.
+
+
+[b]IEntityComponent Implementation[/b]
+
+[code]
+public Entity Entity
+{
+	get { return _owner; }
+}
+
+public Game Game
+{
+	get { return _owner.Game; }
+}
+
+public EntityManagerComponent EntityManager
+{
+	get { return _owner.EntityManager; }
+}
+
+public Transform Transform
+{
+	get { return _owner.Transform; }
+}
+
+public EntityComponentCollection Components
+{
+	get { return _owner.Components; }
+}
+
+void IEntityComponent.Initialize()
+{
+	this.Initialize();
+}
+
+void IEntityComponent.Start()
+{
+	this.Start();
+}
+
+public void SendMessage<T>(string msg, params object[] args) where T : class
+{
+	_owner.SendMessage<T>(msg, args);
+}
+[/code]
+
+Next we get into the IEntityComponent interface implementation.
+
+Now the design of this interface is to facilitate acting on the component as if it IS the Entity in question. Remember, we're trying to create a system where we're basically allowing you to extend the functionality of the Entity class through multiple inheritance at run time. So really... components aren't anything on their own, they're representations of different functionality of the Entity. So most of its base properties are just forwards of the matched Entity properties.
+
+A reference to the Entity itself.
+
+A reference to the Game.
+
+A reference to the EntityManager.
+
+A reference to the Transform of this Entity.
+
+A reference to the EntityComponentCollection to get at the other components.
+
+Explicit implementations of Initialize and Start.
+
+And SendMessage that forwards on to the Entity.
+
+
+[b]IDisposable Implementation[/b]
+
+[code]
+private bool _bDisposed;
+
+/// <summary>
+/// Override to dispose component, disposing is true when called by IDisposable interface, false when called by Destructor.
+/// </summary>
+/// <param name="disposing"></param>
+protected virtual void Dispose(bool disposing)
+{
+	if (!_bDisposed)
+	{
+		_bDisposed = true;
+		if (_owner != null)
+		{
+			_owner.EntityManager.DestroyComponent(this); //called after _bDisposed is set true, this way dispose isn't ran twice by DestroyEntity
+			_owner = null;
+		}
+		
+	}
+}
+
+~EntityComponent()
+{
+	this.Dispose(false);
+}
+
+public void Dispose()
+{
+	Dispose(true);
+	GC.SuppressFinalize(this);
+}
+[/code]
+
+And lastly the IDisposable interface, it's similar to the Entity disposable implementation for the same reasons.
+
+
+Now that we've covered the Entity class and it's working parts... it's time to get the to EntityManagerComponent. That class, being what it is, is going to need its own section of this article dedicated to it.
+
+Look forward to next time.

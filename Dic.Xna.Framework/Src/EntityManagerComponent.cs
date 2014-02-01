@@ -68,12 +68,16 @@ namespace Dic.Xna.Framework
         #region Methods
 
         /// <summary>
-        /// This method is how entities register themselves with an EntityManager
+        /// Registers an entity with this EntityManagerComponent.
         /// </summary>
         /// <param name="entity"></param>
-        internal void RegisterEntity(Entity entity)
+        /// <remarks>
+        /// This method is thread safe to only a single Entity. If you have a group of entities to add, try using RegisterEntities, otherwise the update 
+        /// loop may Start and Update some of the entities before you've finished adding them all.
+        /// </remarks>
+        public void RegisterEntity(Entity entity)
         {
-            if (entity.EntityManager != this) throw new ArgumentException("Can only register entity with the EntityManagerComponent it was constructed with.", "entity");
+            if (entity.EntityManager != null) throw new ArgumentException("Entity is already registered with an EntityManagerComponent.", "entity");
 
             if (_updateThread != null && System.Threading.Thread.CurrentThread == _updateThread)
             {
@@ -81,9 +85,66 @@ namespace Dic.Xna.Framework
                 switch (_phase)
                 {
                     case UpdatePhase.StartingPhase:
-                        if (!_entities.Contains(entity))
+                        _entities.Add(entity); //safe to add here, entities isn't modified during startcallloop
+                        entity.RegisterManager(this);
+                        var comps = entity.Components.ToArray(); //any components that get added during Initialize will end up in the auto-initialized in RegisterComponent
+                        foreach (var comp in comps)
+                        {
+                            comp.Initialize();
+                            _startPool.Enqueue(comp);
+                        }
+                        break;
+                    case UpdatePhase.None:
+                    case UpdatePhase.InitializingPhase:
+                    case UpdatePhase.UpdatingPhase:
+                    case UpdatePhase.CleanUp:
+                        lock (_lock)
+                        {
+                            if (!_initializeCache.Contains(entity))
+                            {
+                                _initializeCache.Add(entity);
+                            }
+                        }
+                        break;
+                }
+            }
+            else
+            {
+                //happened outside of the main update loop, just lock and add
+                lock (_lock)
+                {
+                    if (!_initializeCache.Contains(entity))
+                    {
+                        _initializeCache.Add(entity);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Registers a group of entities with this EntityManagerComponent.
+        /// </summary>
+        /// <param name="entities"></param>
+        /// <remarks>
+        /// This method thread safely registers all the entities in one swoop before the update loop can get to Starting or Updating any of them too early.
+        /// </remarks>
+        public void RegisterEntities(IEnumerable<Entity> entities)
+        {
+            foreach (var entity in entities)
+            {
+                if (entity.EntityManager != null) throw new ArgumentException("One or more Entity is already registered with an EntityManagerComponent.", "entities");
+            }
+
+            if (_updateThread != null && System.Threading.Thread.CurrentThread == _updateThread)
+            {
+                //occurred during the main update thread while this Update method is running
+                switch (_phase)
+                {
+                    case UpdatePhase.StartingPhase:
+                        foreach (var entity in entities)
                         {
                             _entities.Add(entity); //safe to add here, entities isn't modified during startcallloop
+                            entity.RegisterManager(this);
                             var comps = entity.Components.ToArray(); //any components that get added during Initialize will end up in the auto-initialized in RegisterComponent
                             foreach (var comp in comps)
                             {
@@ -98,9 +159,12 @@ namespace Dic.Xna.Framework
                     case UpdatePhase.CleanUp:
                         lock (_lock)
                         {
-                            if (!_entities.Contains(entity))
+                            foreach (var entity in entities)
                             {
-                                _initializeCache.Add(entity);
+                                if (!_initializeCache.Contains(entity))
+                                {
+                                    _initializeCache.Add(entity);
+                                }
                             }
                         }
                         break;
@@ -111,9 +175,12 @@ namespace Dic.Xna.Framework
                 //happened outside of the main update loop, just lock and add
                 lock (_lock)
                 {
-                    if (!_entities.Contains(entity))
+                    foreach (var entity in entities)
                     {
-                        _initializeCache.Add(entity);
+                        if (!_initializeCache.Contains(entity))
+                        {
+                            _initializeCache.Add(entity);
+                        }
                     }
                 }
             }
@@ -123,7 +190,7 @@ namespace Dic.Xna.Framework
         {
             if (component == null) throw new ArgumentNullException("component");
             if (component.Entity == null) throw new EntityComponentException("Malformed IEntityComponent, not attached to an Entity.");
-            if (component.EntityManager == null) throw new ArgumentException("Can only register component with the EntityManagerComponent it's entity is managed by.", "component");
+            if (component.EntityManager != this) throw new ArgumentException("Can only register component with the EntityManagerComponent it's entity is managed by.", "component");
 
             if (_updateThread != null && System.Threading.Thread.CurrentThread == _updateThread)
             {
@@ -131,11 +198,9 @@ namespace Dic.Xna.Framework
                 switch (_phase)
                 {
                     case UpdatePhase.StartingPhase:
-                        if (_entities.Contains(component.Entity))
-                        {
-                            component.Initialize();
-                            _startPool.Enqueue(component);
-                        }
+                        //we initialize here, this is happening because another componented add this component during its 'Start' routine, and it will expect the component to be initialized right away.
+                        component.Initialize();
+                        _startPool.Enqueue(component);
                         break;
                     case UpdatePhase.None:
                     case UpdatePhase.InitializingPhase:
@@ -143,10 +208,7 @@ namespace Dic.Xna.Framework
                     case UpdatePhase.CleanUp:
                         lock (_lock)
                         {
-                            if (_entities.Contains(component.Entity))
-                            {
-                                _componentInitializeCache.Add(component);
-                            }
+                            _componentInitializeCache.Add(component);
                         }
                         break;
                 }
@@ -156,10 +218,7 @@ namespace Dic.Xna.Framework
                 //happened outside of the main update loop, just lock and add if entity has already been initialized
                 lock (_lock)
                 {
-                    if (_entities.Contains(component.Entity))
-                    {
-                        _componentInitializeCache.Add(component);
-                    }
+                    _componentInitializeCache.Add(component);
                 }
             }
         }
@@ -261,15 +320,15 @@ namespace Dic.Xna.Framework
             component.Dispose();
         }
 
-        public Entity CreateEntity()
+        public Entity CreateEntity(string name)
         {
-            var entity = new Entity(this);
+            var entity = new Entity(name,this);
             return entity;
         }
 
-        public Entity CreateEntity(params Type[] componentTypes)
+        public Entity CreateEntity(string name, params Type[] componentTypes)
         {
-            var entity = new Entity(this);
+            var entity = new Entity(name, this);
             foreach (var tp in componentTypes)
             {
                 entity.Components.AddComponent(tp);
@@ -287,6 +346,11 @@ namespace Dic.Xna.Framework
             }
 
             return null;
+        }
+
+        public bool IsManaging(Entity entity)
+        {
+            return _entities.Contains(entity);
         }
 
         #endregion
@@ -307,25 +371,16 @@ namespace Dic.Xna.Framework
             //we keep doing this until we register empty, this catches all entities created during the Initialize call to any component
             while (_initializeCache.Count > 0)
             {
-                Entity[] cache;
                 //lock onto the cache and get all the entities out, this way when Awake and Start are called those messages can create Entities without issue
                 lock (_lock)
                 {
-                    cache = _initializeCache.ToArray();
+                    var cache = _initializeCache.ToArray();
                     _initializeCache.Clear();
                     //Add to the entity list here, entities are only added to the actual list in the main update thread for thread-safety
-                    _entities.AddRange(cache);
-                }
-
-                //initialize the entity
-                foreach (var entity in cache)
-                {
-                    //initialize all components on the entity
-                    var comps = entity.Components.ToArray();
-                    foreach (var comp in comps)
+                    foreach (var entity in cache)
                     {
-                        comp.Initialize();
-                        _startPool.Enqueue(comp);
+                        _entities.Add(entity);
+                        entity.RegisterManager(this); //this will register any components already on the entity, which will be captured by _componentInitializeCache
                     }
                 }
 
