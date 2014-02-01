@@ -91,7 +91,7 @@ namespace Dic.Xna.Framework.Src
             }
         }
 
-        public void PostNotification<T>(object sender, this T notification) where T : Notification
+        public void PostNotification<T>(object sender, T notification) where T : Notification
         {
             if (notification == null) throw new ArgumentNullException("notification");
             if (sender == null) throw new ArgumentNullException("sender");
